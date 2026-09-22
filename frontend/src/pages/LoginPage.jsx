@@ -7,7 +7,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Form Fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -18,10 +17,29 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // تسجيل الدخول بالبريد وكلمة المرور
       const data = await login(email, password);
-      console.log('Login Success:', data);
-      window.location.href = '/dashboard';
+      
+      const token = data?.accessToken || data?.token || data?.data?.token;
+      const user = data?.user || data?.data?.user || {};
+      
+      let userRole = user?.role || (Array.isArray(user?.roles) ? user.roles[0] : 'WORKSHOP_MANAGER');
+      userRole = String(userRole).toUpperCase().trim();
+
+      if (token) {
+        localStorage.setItem('token', token);
+        localStorage.setItem('accessToken', token);
+      }
+      localStorage.setItem('user', JSON.stringify(user));
+      localStorage.setItem('role', userRole);
+
+      // التوجيه المباشر
+      if (userRole === 'STUDENT' || userRole === 'TRAINEE') {
+        window.location.href = '/student';
+      } else if (['STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'].includes(userRole)) {
+        window.location.href = '/customer';
+      } else {
+        window.location.href = '/dashboard';
+      }
     } catch (error) {
       console.error('Auth Error:', error);
       setErrorMessage(
@@ -34,35 +52,22 @@ export default function LoginPage() {
 
   return (
     <div dir="rtl" className="min-h-screen w-full bg-slate-100 flex items-center justify-center p-4 font-sans">
-      {/* Container Box */}
       <div className="w-full max-w-5xl bg-white rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-[580px]">
-        
-        {/* Left Form Section (7 cols) */}
         <div className="md:col-span-7 p-8 md:p-12 flex flex-col justify-center">
-          {/* Header Titles */}
           <div className="text-center mb-8">
-            <h2 className="text-2xl md:text-3xl font-bold text-slate-900 mb-2">
-              مرحباً بك مجدداً
-            </h2>
-            <p className="text-sm text-slate-500">
-              سجّل الدخول للوصول إلى مساحة العمل الخاصة بك
-            </p>
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-900 mb-2">مرحباً بك مجدداً</h2>
+            <p className="text-sm text-slate-500">سجّل الدخول للوصول إلى مساحة العمل الخاصة بك</p>
           </div>
 
-          {/* Error Alert */}
           {errorMessage && (
             <div className="mb-6 p-3.5 bg-red-50 border border-red-200 text-red-600 text-xs rounded-xl text-center font-medium">
               {errorMessage}
             </div>
           )}
 
-          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Email Field */}
             <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                البريد الإلكتروني
-              </label>
+              <label className="block text-xs font-bold text-slate-800 mb-1.5">البريد الإلكتروني</label>
               <div className="relative">
                 <input
                   type="email"
@@ -76,11 +81,8 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Password Field */}
             <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                كلمة المرور
-              </label>
+              <label className="block text-xs font-bold text-slate-800 mb-1.5">كلمة المرور</label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -101,7 +103,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Options Row */}
             <div className="flex items-center justify-between text-xs pt-1">
               <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
                 <input
@@ -112,12 +113,9 @@ export default function LoginPage() {
                 />
                 تذكرني
               </label>
-              <a href="#forgot" className="text-blue-600 font-semibold hover:underline">
-                نسيت كلمة المرور؟
-              </a>
+              <a href="#forgot" className="text-blue-600 font-semibold hover:underline">نسيت كلمة المرور؟</a>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
@@ -128,9 +126,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Right Blue Hero Section (5 cols) */}
         <div className="md:col-span-5 bg-blue-600 p-8 md:p-10 text-white flex flex-col justify-between relative overflow-hidden">
-          {/* Logo Header */}
           <div className="flex items-center justify-end gap-3 z-10">
             <div className="text-left">
               <h3 className="text-lg font-bold tracking-tight">مهنة PRO</h3>
@@ -141,30 +137,22 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Middle Content */}
           <div className="my-auto py-8 z-10">
             <span className="text-xs bg-white/10 backdrop-blur-md px-3 py-1 rounded-full text-blue-100 mb-4 inline-block font-medium">
               منصة واحدة لإدارة كل عملياتك
             </span>
             <h1 className="text-2xl md:text-3xl font-extrabold leading-snug mb-4">
-              شغّل ورشتك بكفاءة، <br />
-              وطوّر مهارات فريقك.
+              شغّل ورشتك بكفاءة، <br /> وطوّر مهارات فريقك.
             </h1>
             <p className="text-xs md:text-sm text-blue-100/90 leading-relaxed max-w-sm">
               تابع الأعمال والمخزون والتدريب من لوحة تحكم موحدة مصممة لفرق الورش الحديثة.
             </p>
           </div>
 
-          {/* Footer */}
           <div className="text-[11px] text-blue-200/70 text-center z-10">
             © 2026 مهنة PRO - جميع الحقوق محفوظة
           </div>
-
-          {/* Background Decorative Elements */}
-          <div className="absolute -bottom-16 -left-16 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
-          <div className="absolute -top-16 -right-16 w-64 h-64 bg-black/10 rounded-full blur-2xl pointer-events-none" />
         </div>
-
       </div>
     </div>
   );
