@@ -4,7 +4,6 @@ import Navbar from '../components/layout/Navbar';
 import { 
   Wrench, 
   Package, 
-  GraduationCap, 
   Activity, 
   TrendingUp, 
   TrendingDown 
@@ -12,14 +11,12 @@ import {
 import { 
   getWorkshopDashboard, 
   getInventoryDashboard, 
-  getTrainingDashboard, 
   getRecentJobs 
 } from '../services/dashboardService';
 
 export default function DashboardPage() {
   const [workshopData, setWorkshopData] = useState(null);
   const [inventoryData, setInventoryData] = useState(null);
-  const [trainingData, setTrainingData] = useState(null);
   const [recentJobs, setRecentJobs] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -27,16 +24,14 @@ export default function DashboardPage() {
     async function loadDashboardData() {
       try {
         setLoading(true);
-        const [ws, inv, tr, jobs] = await Promise.all([
+        const [ws, inv, jobs] = await Promise.all([
           getWorkshopDashboard().catch(() => null),
           getInventoryDashboard().catch(() => null),
-          getTrainingDashboard().catch(() => null),
           getRecentJobs().catch(() => []),
         ]);
 
         setWorkshopData(ws);
         setInventoryData(inv);
-        setTrainingData(tr);
         setRecentJobs(Array.isArray(jobs) ? jobs : jobs?.items || jobs?.data || []);
       } catch (err) {
         console.error('Error loading dashboard data:', err);
@@ -79,19 +74,12 @@ export default function DashboardPage() {
   const activeJobs = inProgressCount + qualityCheckCount + receivedCount + readyCount + diagnosisCount + repairCount;
   const totalStatusJobs = jobsByStage.reduce((sum, item) => sum + Number(item.count), 0);
 
-  // 2. حساب الأحواض والمخزون والطلاب
+  // 2. حساب الأحواض والمخزون
   const activeBays = activeJobs > 0 ? Math.min(activeJobs, 16) : 0;
   const totalBays = 16;
   const bayUtilization = totalBays > 0 ? ((activeBays / totalBays) * 100).toFixed(1) : '0.0';
 
   const lowStock = inventoryData?.lowStockCount ?? inventoryData?.alertsCount ?? 0;
-// حساب نسبة إتمام الطلاب من بيانات التدريب الراجعة من الباك إند
-const passedAssessments = trainingData?.assessmentsByStatus?.find(a => a.status === 'PASSED')?.count || 0;
-
-// حساب النسبة بمرونة من بيانات التقييمات والشهادات
-const studentCompletion = trainingData?.completionRate 
-  ? (trainingData.completionRate * 100).toFixed(1)
-  : (passedAssessments > 0 ? Math.min(((passedAssessments / (passedAssessments + (trainingData?.atRiskStudents || 0))) * 100), 100).toFixed(1) : '0.0');
   const jobsList = recentJobs || [];
 
   // مساعد الحالات والترجمة
@@ -121,7 +109,7 @@ const studentCompletion = trainingData?.completionRate
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        <Navbar onOpenNewJobModal={() => alert('فتح نموذج بطاقة عمل جديدة')} />
+        <Navbar />
 
         <main className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto w-full">
           <div>
@@ -132,12 +120,12 @@ const studentCompletion = trainingData?.completionRate
             </div>
             <h1 className="text-2xl font-bold text-slate-900">لوحة التحكم</h1>
             <p className="text-xs text-slate-500 mt-1">
-              إليك ملخص أداء الورشة والتدريب المباشر من قاعدة البيانات
+              إليك ملخص أداء الورشة والمخزون المباشر من قاعدة البيانات
             </p>
           </div>
 
-          {/* 1️⃣ Top Stat Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {/* 1️⃣ Top Stat Cards (موزعة على 3 أعمدة) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             
             {/* الأعمال النشطة */}
             <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col justify-between h-44 relative overflow-hidden">
@@ -187,23 +175,6 @@ const studentCompletion = trainingData?.completionRate
               <div>
                 <p className="text-xs text-slate-400 font-medium mb-1">استغلالية الأحواض</p>
                 <h3 className="text-3xl font-extrabold tracking-tight">{bayUtilization}%</h3>
-              </div>
-            </div>
-
-            {/* إتمام الطلاب */}
-            <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col justify-between h-44 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-                  <GraduationCap className="w-3.5 h-3.5" />
-                  <span>مستمر</span>
-                </span>
-                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-2xl flex items-center justify-center backdrop-blur-md border border-emerald-500/20">
-                  <GraduationCap className="w-6 h-6" />
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 font-medium mb-1">إتمام الطلاب</p>
-                <h3 className="text-3xl font-extrabold tracking-tight">{studentCompletion}%</h3>
               </div>
             </div>
 
@@ -286,7 +257,7 @@ const studentCompletion = trainingData?.completionRate
                 <h3 className="text-lg font-bold">آخر بطاقات العمل</h3>
                 <p className="text-xs text-slate-400">أحدث كروت الصيانة المسجلة في الورشة</p>
               </div>
-              <a href="#all-jobs" className="text-xs text-blue-400 font-bold hover:underline">
+              <a href="/jobs" className="text-xs text-blue-400 font-bold hover:underline">
                 عرض الكل
               </a>
             </div>

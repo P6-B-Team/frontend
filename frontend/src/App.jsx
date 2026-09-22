@@ -3,6 +3,39 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import StudentPortal from './pages/StudentPortal';
 import CustomerPortal from './pages/CustomerPortal';
+import JobCardsPage from './pages/JobCardsPage';
+import JobCardDetailPage from './pages/JobCardDetailPage';
+import InventoryPage from './pages/InventoryPage';
+import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
+
+// أدوار الوصول لكل مسار
+const WORKSHOP_ROLES = [
+  'WORKSHOP_MANAGER',
+  'SERVICE_ADVISOR',
+  'TECHNICIAN',
+  'QUALITY_CHECKER',
+  'ADMIN',
+  'MANAGER',
+];
+
+const INVENTORY_ROLES = [
+  'WORKSHOP_MANAGER',
+  'STOREKEEPER',
+  'STORE_SUPERVISOR',
+  'ADMIN',
+  'MANAGER',
+];
+
+const PROCUREMENT_ROLES = [
+  'WORKSHOP_MANAGER',
+  'PROCUREMENT',
+  'PROCUREMENT_APPROVER',
+  'STOREKEEPER',
+  'STORE_SUPERVISOR',
+  'ADMIN',
+  'MANAGER',
+];
+
 
 const ProtectedRoute = ({ allowedRoles, children }) => {
   const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
@@ -66,7 +99,44 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/jobs"
+          element={
+            <ProtectedRoute allowedRoles={WORKSHOP_ROLES}>
+              <JobCardsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/jobs/:id"
+          element={
+            <ProtectedRoute allowedRoles={WORKSHOP_ROLES}>
+              <JobCardDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/inventory"
+          element={
+            <ProtectedRoute allowedRoles={INVENTORY_ROLES}>
+              <InventoryPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/purchase-orders"
+          element={
+            <ProtectedRoute allowedRoles={PROCUREMENT_ROLES}>
+              <PurchaseOrdersPage />
+            </ProtectedRoute>
+          }
+        />
+
         <Route path="*" element={<Navigate to="/" replace />} />
+
       </Routes>
     </Router>
   );
