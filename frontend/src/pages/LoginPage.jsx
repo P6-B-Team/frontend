@@ -43,7 +43,7 @@ export default function LoginPage() {
     } catch (error) {
       console.error('Auth Error:', error);
       setErrorMessage(
-        error.response?.data?.message || 'حدث خطأ، يرجى التأكد من البيانات والاتصال بالباك إند'
+        'حدث خطأ، يرجى التأكد من البيانات و اعادة المحاولة'
       );
     } finally {
       setLoading(false);
