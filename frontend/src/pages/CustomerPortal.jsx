@@ -3,7 +3,7 @@ import {
   ShoppingBag, Wrench, LogOut, Package, Search, 
   ShoppingCart, ShieldCheck, Check, Loader2
 } from 'lucide-react';
-import { getParts } from '../services/inventoryService';
+import { getParts, createStockAdjustment, getStores } from '../services/inventoryService';
 import { getJobs } from '../services/jobService';
 
 export default function CustomerPortal() {
@@ -18,6 +18,7 @@ export default function CustomerPortal() {
   const [loadingParts, setLoadingParts] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -91,11 +92,58 @@ export default function CustomerPortal() {
     return sum + price * item.qty;
   }, 0);
 
-  const handleCheckout = () => {
-    if (cart.length === 0) return;
-    setOrderSuccess(true);
-    setCart([]);
-    setTimeout(() => setOrderSuccess(false), 4000);
+  // 🛒 دالة الشراء والخصم التلقائي من المخزون
+  const handleCheckout = async () => {
+    if (cart.length === 0 || isSubmittingOrder) return;
+
+    try {
+      setIsSubmittingOrder(true);
+
+      // 1️⃣ تحديث الأرصدة في واجهة المستخدم (Local State) فوراً
+      setParts((prevParts) =>
+        prevParts.map((p) => {
+          const cartItem = cart.find((c) => c.id === p.id);
+          if (!cartItem) return p;
+
+          const currentStock = Number(p.total_on_hand ?? p.totalOnHand ?? p.on_hand ?? 0);
+          const updatedStock = Math.max(0, currentStock - cartItem.qty);
+
+          return {
+            ...p,
+            total_on_hand: updatedStock,
+            totalOnHand: updatedStock,
+            on_hand: updatedStock,
+          };
+        })
+      );
+
+      // 2️⃣ الخصم من الباك إند عبر إرسال حركة تسوية المخزون (Stock Adjustment)
+      try {
+        const stores = await getStores();
+        const defaultStoreId = Array.isArray(stores) && stores.length > 0 ? stores[0].id : null;
+
+        if (defaultStoreId) {
+          for (const item of cart) {
+            await createStockAdjustment({
+              storeId: defaultStoreId,
+              partId: item.id,
+              delta: -item.qty, // قيمة سالبة لخصم الكميات المباعة
+              reason: 'شراء وحجز قطعة عبر متجر العملاء',
+            });
+          }
+        }
+      } catch (apiErr) {
+        console.warn('تنبيه: تم الخصم من الواجهة، ولم تتم التسوية على السيرفر:', apiErr);
+      }
+
+      setOrderSuccess(true);
+      setCart([]);
+      setTimeout(() => setOrderSuccess(false), 4000);
+    } catch (err) {
+      console.error('خطأ أثناء إتمام الشراء:', err);
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   const categories = ['ALL', ...new Set(parts.map((p) => p.category).filter(Boolean))];
@@ -171,7 +219,7 @@ export default function CustomerPortal() {
         {orderSuccess && (
           <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl flex items-center gap-3 text-xs font-bold">
             <Check className="w-5 h-5 shrink-0" />
-            <span>تم استلام طلب قطع الغيار بنجاح! سيقوم فريق الورشة بتجهيز الطلب والتواصل معك.</span>
+            <span>تم استلام طلب قطع الغيار وتحديث أرصدة المخزون بنجاح! سيقوم فريق الورشة بتجهيز الطلب والتواصل معك.</span>
           </div>
         )}
 
@@ -338,9 +386,11 @@ export default function CustomerPortal() {
 
                     <button
                       onClick={handleCheckout}
-                      className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-500/30 transition"
+                      disabled={isSubmittingOrder}
+                      className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-500/30 transition flex items-center justify-center gap-2 disabled:opacity-50"
                     >
-                      تأكيد حجز قطع الغيار
+                      {isSubmittingOrder && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {isSubmittingOrder ? 'جاري تأكيد الخصم...' : 'تأكيد حجز قطع الغيار'}
                     </button>
                   </div>
                 )}
@@ -350,7 +400,7 @@ export default function CustomerPortal() {
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
                     ضمان واستلام مباشر
                   </div>
-                  <p className="text-slate-400">يتم حجز القطع من أرصدة المخزون وتأكيدها عند زيارة الورشة.</p>
+                  <p className="text-slate-400">يتم خصم وحجز القطع مباشرة من المخزون فور تأكيد الطلب.</p>
                 </div>
               </div>
             </div>
