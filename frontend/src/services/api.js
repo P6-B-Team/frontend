@@ -1,7 +1,8 @@
 import axios from 'axios';
 
+// عنوان الباك إند موحّد وصارم: localhost فقط — لا أي نطاق إنتاجي أو IP عن بُعد (مصدر أخطاء CORS)
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1',
+  baseURL: import.meta.env.VITE_API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -9,7 +10,9 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-  if (token) {
+  // لا يُرفق أي Authorization مع تسجيل الدخول نفسه (توكن قديم يجبر Preflight على هيدر غير مسموح به → CORS)
+  const isLoginRequest = (config.url || '').includes('/auth/login');
+  if (token && !isLoginRequest) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;

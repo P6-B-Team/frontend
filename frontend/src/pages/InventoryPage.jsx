@@ -7,15 +7,21 @@ import {
   Boxes,
   ArrowLeftRight,
   RotateCcw,
+  ShoppingCart,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 import Sidebar from '../components/layout/Sidebar';
 import Navbar from '../components/layout/Navbar';
+import Toast from '../components/Toast';
 import {
   getParts,
   getStores,
   getStockBalances,
   getStockMovements,
+  getStockAlerts,
 } from '../services/inventoryService';
+import { createPurchaseOrder, getVendors } from '../services/purchasingService';
 
 const TABS = [
   { key: 'parts', label: 'كارت القطع', icon: Package },
@@ -62,6 +68,21 @@ const formatDateTime = (v) => {
   return d.toLocaleString('ar-EG');
 };
 
+const extractApiError = (err, fallback) =>
+  err?.response?.data?.error?.message || err?.response?.data?.message || fallback;
+
+const inputCls =
+  'w-full px-3 py-2.5 bg-slate-100/80 border border-transparent rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 transition';
+
+const labelCls = 'block text-[11px] font-bold text-slate-600 mb-1.5';
+
+// قيم مخزون القطعة بأسمائها المختلفة القادمة من الباك إند
+const partOnHand = (p) =>
+  Number(p?.total_on_hand ?? p?.totalOnHand ?? p?.on_hand ?? p?.onHand ?? 0);
+const partMinLevel = (p) => Number(p?.min_level ?? p?.minLevel ?? 0);
+const partMaxLevel = (p) => Number(p?.max_level ?? p?.maxLevel ?? 0);
+const isLowStock = (p) => partOnHand(p) <= partMinLevel(p);
+
 export default function InventoryPage() {
   const [activeTab, setActiveTab] = useState('parts');
 
@@ -84,6 +105,18 @@ export default function InventoryPage() {
   const [movements, setMovements] = useState([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
   const [movementsError, setMovementsError] = useState(null);
+
+  // تنبيهات المخزون المنخفض + نافذة إنشاء أمر شراء (WST-FR-07 / WST-FR-14)
+  const [stockAlerts, setStockAlerts] = useState({});
+  const [toast, setToast] = useState(null);
+  const [poModalPart, setPoModalPart] = useState(null);
+  const [vendors, setVendors] = useState([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [poVendorId, setPoVendorId] = useState('');
+  const [poQuantity, setPoQuantity] = useState('');
+  const [poUnitCost, setPoUnitCost] = useState('');
+  const [poSubmitting, setPoSubmitting] = useState(false);
+  const [poError, setPoError] = useState(null);
 
   const loadParts = useCallback(async () => {
     setPartsLoading(true);
@@ -146,6 +179,25 @@ export default function InventoryPage() {
     }
   }, []);
 
+  const closeToast = useCallback(() => setToast(null), []);
+  const showToast = (type, message) => setToast({ type, message });
+
+  // تحميل تنبيهات المخزون المنخفض مع اقتراح إعادة الطلب من الباك إند
+  const loadStockAlerts = useCallback(async () => {
+    try {
+      const payload = await getStockAlerts();
+      const map = {};
+      toList(payload).forEach((a) => {
+        const pid = a.partId ?? a.part_id ?? a.id;
+        if (pid) map[pid] = a;
+      });
+      setStockAlerts(map);
+    } catch (err) {
+      console.error('Error loading stock alerts:', err);
+      setStockAlerts({});
+    }
+  }, []);
+
   // بحث بتأخير لكارت القطع
   useEffect(() => {
     const timer = setTimeout(() => setPartsSearch(partsSearchInput.trim()), 400);
@@ -160,6 +212,16 @@ export default function InventoryPage() {
     run();
     return undefined;
   }, [activeTab, partsSearch, loadParts]);
+
+  // تحميل تنبيهات المخزون المنخفض مع تبويب كارت القطع
+  useEffect(() => {
+    if (activeTab !== 'parts') return undefined;
+    async function run() {
+      await loadStockAlerts();
+    }
+    run();
+    return undefined;
+  }, [activeTab, loadStockAlerts]);
 
   useEffect(() => {
     if (activeTab !== 'balances') return undefined;
@@ -201,6 +263,96 @@ export default function InventoryPage() {
     const sku = row.part?.sku || row.part_sku || row.partSku || row.sku || '';
     const name = row.part?.name || row.part_name || row.partName || row.name || '';
     return [sku, name].filter(Boolean).join(' — ');
+  };
+
+  // فتح نافذة أمر شراء معبأة مسبقاً من القطعة المنخفضة
+  const openPoModal = async (part) => {
+    setPoModalPart(part);
+    setPoVendorId('');
+    setPoError(null);
+
+    // الكمية المقترحة: من تنبيه إعادة الطلب أو محسوبة من الحدود المعرفة للقطعة
+    const onHand = partOnHand(part);
+    const minL = partMinLevel(part);
+    const maxL = partMaxLevel(part);
+    const alert = stockAlerts[part?.id];
+    const alertSuggested = Number(
+      alert?.suggested_qty ??
+        alert?.suggestedQty ??
+        alert?.reorder_qty ??
+        alert?.reorderQty ??
+        alert?.quantity ??
+        alert?.qty ??
+        NaN
+    );
+    const fallbackQty = Math.max(maxL - onHand, minL - onHand, 1);
+    setPoQuantity(
+      String(
+        Number.isNaN(alertSuggested) || alertSuggested <= 0
+          ? Math.ceil(fallbackQty)
+          : Math.ceil(alertSuggested)
+      )
+    );
+    setPoUnitCost(String(part?.average_cost ?? part?.averageCost ?? ''));
+
+    // تحميل الموردين عند الحاجة
+    if (vendors.length === 0) {
+      setVendorsLoading(true);
+      try {
+        const payload = await getVendors();
+        setVendors(toList(payload));
+      } catch (err) {
+        console.error('Error loading vendors:', err);
+        setVendors([]);
+        showToast('error', 'تعذر تحميل قائمة الموردين من السيرفر.');
+      } finally {
+        setVendorsLoading(false);
+      }
+    }
+  };
+
+  const handleCreatePo = async (e) => {
+    e.preventDefault();
+    setPoError(null);
+
+    if (!poVendorId) {
+      setPoError('يرجى اختيار المورد قبل إنشاء أمر الشراء.');
+      return;
+    }
+    const qty = Number(poQuantity);
+    if (Number.isNaN(qty) || qty <= 0) {
+      setPoError('الكمية المطلوبة يجب أن تكون أكبر من صفر.');
+      return;
+    }
+    const unitCost = Number(poUnitCost);
+    if (Number.isNaN(unitCost) || unitCost < 0) {
+      setPoError('تكلفة الوحدة غير صحيحة.');
+      return;
+    }
+
+    setPoSubmitting(true);
+    try {
+      const created = await createPurchaseOrder({
+        vendorId: poVendorId,
+        lines: [{ partId: poModalPart.id, quantity: qty, unitCost }],
+      });
+      setPoModalPart(null);
+      const poNo = created?.po_no || created?.poNo;
+      showToast(
+        'success',
+        poNo
+          ? `تم إنشاء أمر الشراء ${poNo} كمسودة بنجاح.`
+          : 'تم إنشاء أمر الشراء كمسودة بنجاح.'
+      );
+    } catch (err) {
+      console.error('Create PO error:', err);
+      showToast(
+        'error',
+        extractApiError(err, 'تعذر إنشاء أمر شراء من السيرفر. يرجى المحاولة مرة أخرى.')
+      );
+    } finally {
+      setPoSubmitting(false);
+    }
   };
 
   return (
@@ -312,39 +464,82 @@ export default function InventoryPage() {
                         <th className="py-3 px-3 font-semibold">متوسط التكلفة</th>
                         <th className="py-3 px-3 font-semibold">سعر البيع</th>
                         <th className="py-3 px-3 font-semibold">الرصيد الإجمالي</th>
+                        <th className="py-3 px-3 font-semibold">التنبيه</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-xs">
                       {partsLoading ? (
                         <tr>
-                          <td colSpan={8} className="py-12 text-center">
+                          <td colSpan={9} className="py-12 text-center">
                             <Loader2 className="w-7 h-7 text-blue-500 animate-spin mx-auto" />
                           </td>
                         </tr>
                       ) : parts.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-10 text-center text-slate-500">
+                          <td colSpan={9} className="py-10 text-center text-slate-500">
                             لا توجد قطع مطابقة في قاعدة البيانات.
                           </td>
                         </tr>
                       ) : (
-                        parts.map((p) => (
-                          <tr key={p.id} className="hover:bg-slate-800/40 transition">
-                            <td className="py-3.5 px-3 font-bold text-blue-400">{p.sku || '—'}</td>
-                            <td className="py-3.5 px-3">
-                              <div className="font-bold text-white">{p.name || '—'}</div>
-                              <div className="text-[11px] text-slate-400">{p.name_ar || p.nameAr || ''}</div>
-                            </td>
-                            <td className="py-3.5 px-3 text-slate-300">{p.category || '—'}</td>
-                            <td className="py-3.5 px-3 text-slate-300">{formatQty(p.min_level ?? p.minLevel)}</td>
-                            <td className="py-3.5 px-3 text-slate-300">{formatQty(p.max_level ?? p.maxLevel)}</td>
-                            <td className="py-3.5 px-3 text-slate-300">{formatMoney(p.average_cost ?? p.averageCost)}</td>
-                            <td className="py-3.5 px-3 text-slate-300">{formatMoney(p.sell_price ?? p.sellPrice)}</td>
-                            <td className="py-3.5 px-3 font-bold text-emerald-400">
-                              {formatQty(p.total_on_hand ?? p.totalOnHand ?? p.on_hand ?? p.onHand)}
-                            </td>
-                          </tr>
-                        ))
+                        parts.map((p) => {
+                          const low = isLowStock(p);
+                          return (
+                            <tr
+                              key={p.id}
+                              className={`transition ${
+                                low ? 'bg-red-500/10 hover:bg-red-500/15' : 'hover:bg-slate-800/40'
+                              }`}
+                            >
+                              <td className="py-3.5 px-3 font-bold text-blue-400">{p.sku || '—'}</td>
+                              <td className="py-3.5 px-3">
+                                <div className="font-bold text-white">{p.name || '—'}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {p.name_ar || p.nameAr || ''}
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-3 text-slate-300">{p.category || '—'}</td>
+                              <td className="py-3.5 px-3 text-slate-300">
+                                {formatQty(p.min_level ?? p.minLevel)}
+                              </td>
+                              <td className="py-3.5 px-3 text-slate-300">
+                                {formatQty(p.max_level ?? p.maxLevel)}
+                              </td>
+                              <td className="py-3.5 px-3 text-slate-300">
+                                {formatMoney(p.average_cost ?? p.averageCost)}
+                              </td>
+                              <td className="py-3.5 px-3 text-slate-300">
+                                {formatMoney(p.sell_price ?? p.sellPrice)}
+                              </td>
+                              <td
+                                className={`py-3.5 px-3 font-bold ${
+                                  low ? 'text-red-400' : 'text-emerald-400'
+                                }`}
+                              >
+                                {formatQty(p.total_on_hand ?? p.totalOnHand ?? p.on_hand ?? p.onHand)}
+                              </td>
+                              <td className="py-3.5 px-3">
+                                {low ? (
+                                  <div className="flex flex-col items-start gap-1.5">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/40">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      مخزون منخفض
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => openPoModal(p)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition"
+                                    >
+                                      <ShoppingCart className="w-3 h-3" />
+                                      إنشاء أمر شراء
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-slate-600">متوفر</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -554,6 +749,123 @@ export default function InventoryPage() {
             </div>
           )}
 
+          {/* نافذة إنشاء أمر شراء معبأة من تنبيه المخزون المنخفض (WST-FR-14) */}
+          {poModalPart && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div
+                className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+                onClick={() => {
+                  if (!poSubmitting) setPoModalPart(null);
+                }}
+              />
+              <form
+                onSubmit={handleCreatePo}
+                className="relative bg-white rounded-3xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">إنشاء أمر شراء</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      معبأة مسبقاً من تنبيه المخزون المنخفض
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPoModalPart(null)}
+                    disabled={poSubmitting}
+                    className="p-2 text-slate-400 hover:bg-slate-100 rounded-xl transition disabled:opacity-40"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {poError && (
+                  <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-3 flex items-center gap-2 text-xs font-bold">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="flex-1">{poError}</span>
+                  </div>
+                )}
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-xs font-bold text-slate-800">{poModalPart.name || '—'}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {poModalPart.sku ? `SKU: ${poModalPart.sku} — ` : ''}
+                    المتاح: {formatQty(partOnHand(poModalPart))} — الحد الأدنى:{' '}
+                    {formatQty(partMinLevel(poModalPart))}
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelCls}>المورد *</label>
+                  <select
+                    value={poVendorId}
+                    onChange={(e) => setPoVendorId(e.target.value)}
+                    className={inputCls}
+                    disabled={vendorsLoading}
+                  >
+                    <option value="">
+                      {vendorsLoading ? 'جاري تحميل الموردين...' : '— اختر المورد —'}
+                    </option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelCls}>الكمية المطلوبة *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={poQuantity}
+                      onChange={(e) => setPoQuantity(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>تكلفة الوحدة *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={poUnitCost}
+                      onChange={(e) => setPoUnitCost(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-3 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    disabled={poSubmitting}
+                    className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {poSubmitting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ShoppingCart className="w-4 h-4" />
+                    )}
+                    {poSubmitting ? 'جاري الإنشاء...' : 'إنشاء أمر الشراء'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoModalPart(null)}
+                    disabled={poSubmitting}
+                    className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition disabled:opacity-50"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          <Toast toast={toast} onClose={closeToast} />
         </main>
       </div>
     </div>

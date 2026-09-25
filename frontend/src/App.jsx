@@ -2,11 +2,12 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import StudentPortal from './pages/StudentPortal';
-import CustomerPortal from './pages/CustomerPortal';
+import PartsRequisitionPage from './pages/PartsRequisitionPage';
 import JobCardsPage from './pages/JobCardsPage';
 import JobCardDetailPage from './pages/JobCardDetailPage';
 import InventoryPage from './pages/InventoryPage';
 import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
+import TrainingSupervisorPortal from './pages/TrainingSupervisorPortal';
 
 // أدوار الوصول لكل مسار
 const WORKSHOP_ROLES = [
@@ -37,6 +38,14 @@ const PROCUREMENT_ROLES = [
 ];
 
 
+const TRAINING_ROLES = [
+  'TRAINING_SUPERVISOR',
+  'MENTOR',
+  'ADMIN',
+  'MANAGER',
+  'WORKSHOP_MANAGER',
+];
+
 const ProtectedRoute = ({ allowedRoles, children }) => {
   const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
   const userRole = (localStorage.getItem('role') || '').toUpperCase().trim();
@@ -54,7 +63,7 @@ const ProtectedRoute = ({ allowedRoles, children }) => {
   }
   
   if (['STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'].includes(userRole)) {
-    return <Navigate to="/customer" replace />;
+    return <Navigate to="/parts-requisition" replace />;
   }
 
   return <Navigate to="/dashboard" replace />;
@@ -88,13 +97,15 @@ export default function App() {
         />
 
         <Route
-          path="/customer"
+          path="/parts-requisition"
           element={
             <ProtectedRoute allowedRoles={[
-              'STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 
-              'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'
+              'STOREKEEPER', 'STORE_SUPERVISOR', 'SERVICE_ADVISOR',
+              'TECHNICIAN', 'WORKSHOP_MANAGER', 'PROCUREMENT',
+              'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'ADMIN', 'MANAGER',
+              'CUSTOMER', 'BUYER'
             ]}>
-              <CustomerPortal />
+              <PartsRequisitionPage />
             </ProtectedRoute>
           }
         />
@@ -131,6 +142,15 @@ export default function App() {
           element={
             <ProtectedRoute allowedRoles={PROCUREMENT_ROLES}>
               <PurchaseOrdersPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/training-supervisor"
+          element={
+            <ProtectedRoute allowedRoles={TRAINING_ROLES}>
+              <TrainingSupervisorPortal />
             </ProtectedRoute>
           }
         />

@@ -24,7 +24,10 @@ import {
   getBays,
   getUsers,
   getJobWorkItems,
+  getInvoicePreview,
+  issueInvoice,
 } from '../services/jobService';
+import { getSettings } from '../services/dashboardService';
 
 const STATUS_AR = {
   RECEIVED: 'تم الاستلام',
@@ -97,6 +100,74 @@ const formatQty = (v) => {
   return n.toLocaleString('en-US');
 };
 
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isNaN(n) ? 0 : n;
+};
+
+// تطبيع استجابة معاينة الفاتورة (snake_case أو camelCase) إلى شكل موحد
+const normalizeInvoicePreview = (payload) => {
+  const src = payload?.invoice ?? payload ?? {};
+  return {
+    subtotalLabor: toNum(src.subtotal_labor ?? src.subtotalLabor),
+    subtotalParts: toNum(src.subtotal_parts ?? src.subtotalParts),
+    sublet: toNum(src.sublet_cost ?? src.subletCost ?? src.sublet_price ?? src.subletPrice),
+    discount: toNum(src.discount_amount ?? src.discountAmount ?? src.discount),
+    taxRate: toNum(src.tax_rate ?? src.taxRate),
+    taxAmount: toNum(src.tax_amount ?? src.taxAmount),
+    total: toNum(src.total_amount ?? src.totalAmount ?? src.total),
+    source: 'server',
+  };
+};
+
+// نسبة الضريبة تُخزن ككسر (0.14) أو أحياناً كنسبة (14)
+const taxRateFraction = (rate) => {
+  const r = toNum(rate);
+  return r > 1 ? r / 100 : r;
+};
+
+// حساب احتياطي محلي من البيانات الفعلية المسجلة + نسبة الضريبة من إعدادات المنشأة
+const computeLocalInvoiceSummary = (jobData, settings, discount) => {
+  const laborList = toList(jobData?.labor_entries || jobData?.laborEntries || jobData?.labor);
+  const subtotalLabor = laborList.reduce((sum, l) => {
+    const billable = l.billable ?? l.is_billable ?? true;
+    if (!billable) return sum;
+    const minutes = toNum(l.minutes ?? l.duration_minutes ?? l.durationMinutes);
+    const rate = toNum(l.rate_snapshot ?? l.rateSnapshot ?? l.hourly_rate ?? l.hourlyRate);
+    return sum + (minutes / 60) * rate;
+  }, 0);
+
+  const partsList = toList(jobData?.job_parts || jobData?.jobParts || jobData?.parts);
+  const subtotalParts = partsList.reduce((sum, p) => {
+    const lineTotal = p.line_total ?? p.lineTotal;
+    if (lineTotal !== null && lineTotal !== undefined && lineTotal !== '') {
+      return sum + toNum(lineTotal);
+    }
+    const qty = toNum(p.quantity);
+    const unit = toNum(p.unit_cost_snapshot ?? p.unitCostSnapshot ?? p.unit_cost ?? p.unitCost);
+    return sum + qty * unit;
+  }, 0);
+
+  const sublet = toNum(
+    jobData?.sublet_cost ?? jobData?.subletCost ?? jobData?.sublet_price ?? jobData?.subletPrice
+  );
+  const discountValue = Math.max(toNum(discount), 0);
+  const taxRate = toNum(settings?.tax_rate ?? settings?.taxRate);
+  const base = Math.max(subtotalLabor + subtotalParts + sublet - discountValue, 0);
+  const taxAmount = base * taxRateFraction(taxRate);
+
+  return {
+    subtotalLabor,
+    subtotalParts,
+    sublet,
+    discount: discountValue,
+    taxRate,
+    taxAmount,
+    total: base + taxAmount,
+    source: 'local',
+  };
+};
+
 // تحويل قيمة تاريخ من الباك إند إلى صيغة datetime-local
 const toDateTimeInput = (v) => {
   if (!v) return '';
@@ -145,6 +216,11 @@ export default function JobCardDetailPage() {
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [invoiceSummary, setInvoiceSummary] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [discountInput, setDiscountInput] = useState('');
+  const [issuingInvoice, setIssuingInvoice] = useState(false);
   const [form, setForm] = useState({
     bayId: '',
     technicianId: '',
@@ -194,6 +270,76 @@ export default function JobCardDetailPage() {
   const status = job?.status || '';
   const transitions = NEXT_TRANSITIONS[status] || [];
   const canCancel = CANCELLABLE.includes(status);
+
+  // ===== ملخص الفاتورة (WST-FR-09) =====
+  const invoiceReady = status === 'READY' || status === 'DELIVERED';
+  const rawInvoice = job?.invoice ?? job?.invoices ?? null;
+  const existingInvoice = Array.isArray(rawInvoice)
+    ? rawInvoice[0] || null
+    : rawInvoice && typeof rawInvoice === 'object' && Object.keys(rawInvoice).length > 0
+      ? rawInvoice
+      : null;
+  const discountValue = discountInput === '' ? undefined : toNum(discountInput);
+
+  // معاينة إجماليات الفاتورة من الباك إند (ساعات العمل + القطع + الضريبة + الخصم)
+  useEffect(() => {
+    if (!invoiceReady || existingInvoice) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPreviewLoading(true);
+      try {
+        const preview = await getInvoicePreview(id, discountValue);
+        if (cancelled) return;
+        setInvoiceSummary(normalizeInvoicePreview(preview));
+        setPreviewError(null);
+      } catch (err) {
+        if (cancelled) return;
+        // في حال فشل المعاينة: حساب محلي من البيانات الفعلية + نسبة الضريبة من الإعدادات
+        try {
+          const settings = await getSettings();
+          if (!cancelled) setInvoiceSummary(computeLocalInvoiceSummary(job, settings, discountValue ?? 0));
+        } catch {
+          if (!cancelled) setInvoiceSummary(computeLocalInvoiceSummary(job, null, discountValue ?? 0));
+        }
+        if (!cancelled) {
+          setPreviewError(
+            extractApiError(
+              err,
+              'تعذر تحميل معاينة الفاتورة من السيرفر — يعرض الحساب تقديرياً من البيانات المسجلة.'
+            )
+          );
+        }
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [id, invoiceReady, existingInvoice, discountValue, job]);
+
+  const handleIssueInvoice = async () => {
+    setIssuingInvoice(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await issueInvoice(id, discountValue ?? 0);
+      setActionSuccess('تم إصدار الفاتورة بنجاح');
+      setDiscountInput('');
+      await loadDetail();
+    } catch (err) {
+      console.error('Issue invoice error:', err);
+      setActionError(
+        extractApiError(
+          err,
+          'تعذر إصدار الفاتورة. تأكد من اكتمال بيانات العمالة والقطع ثم حاول مرة أخرى.'
+        )
+      );
+    } finally {
+      setIssuingInvoice(false);
+    }
+  };
 
   const jobNo = job?.job_no || job?.jobNo || '';
   const customerName = job?.customer?.name || job?.customerName || job?.customer_name || '';
@@ -618,6 +764,162 @@ export default function JobCardDetailPage() {
 
                 {/* العمود الجانبي */}
                 <div className="space-y-6">
+                  {/* إصدار الفاتورة / Invoice Summary (WST-FR-09) */}
+                  {invoiceReady && (
+                    <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl space-y-4">
+                      <h3 className="text-base font-bold flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-emerald-400" />
+                        إصدار الفاتورة / Invoice Summary
+                      </h3>
+
+                      {existingInvoice ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-800">
+                            <span className="text-xs font-bold text-slate-200">
+                              {existingInvoice.invoice_no ||
+                                existingInvoice.invoiceNo ||
+                                'فاتورة مُصدَرة'}
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              صادرة
+                            </span>
+                          </div>
+                          <InfoRow
+                            label="إجمالي ساعات العمل"
+                            value={formatMoney(
+                              existingInvoice.subtotal_labor ?? existingInvoice.subtotalLabor
+                            )}
+                          />
+                          <InfoRow
+                            label="إجمالي قطع الغيار"
+                            value={formatMoney(
+                              existingInvoice.subtotal_parts ?? existingInvoice.subtotalParts
+                            )}
+                          />
+                          <InfoRow
+                            label="الخصم"
+                            value={formatMoney(
+                              existingInvoice.discount_amount ?? existingInvoice.discountAmount
+                            )}
+                          />
+                          <InfoRow
+                            label={`ضريبة القيمة المضافة (${(
+                              taxRateFraction(
+                                existingInvoice.tax_rate ?? existingInvoice.taxRate
+                              ) * 100
+                            ).toLocaleString('en-US', { maximumFractionDigits: 2 })}%)`}
+                            value={formatMoney(
+                              existingInvoice.tax_amount ?? existingInvoice.taxAmount
+                            )}
+                          />
+                          <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                            <span className="text-xs font-bold text-slate-300">
+                              الإجمالي النهائي
+                            </span>
+                            <span className="text-base font-bold text-emerald-400">
+                              {formatMoney(
+                                existingInvoice.total_amount ?? existingInvoice.totalAmount
+                              ) || '0.00'}
+                            </span>
+                          </div>
+                          {(existingInvoice.issued_at || existingInvoice.issuedAt) && (
+                            <p className="text-[10px] text-slate-500 pt-1">
+                              تاريخ الإصدار:{' '}
+                              {formatDateTime(existingInvoice.issued_at || existingInvoice.issuedAt)}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="text-[11px] text-slate-400">
+                            محسوبة من {formatQty(laborEntries.length)} سجل عمالة و{' '}
+                            {formatQty(issuedParts.length)} قطعة مصروفة.
+                          </p>
+
+                          {previewLoading ? (
+                            <div className="flex items-center gap-2 text-[11px] text-slate-400 font-bold py-3">
+                              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                              جاري حساب إجماليات الفاتورة...
+                            </div>
+                          ) : invoiceSummary ? (
+                            <div className="space-y-1">
+                              <InfoRow
+                                label="إجمالي ساعات العمل"
+                                value={formatMoney(invoiceSummary.subtotalLabor)}
+                              />
+                              <InfoRow
+                                label="إجمالي قطع الغيار"
+                                value={formatMoney(invoiceSummary.subtotalParts)}
+                              />
+                              {invoiceSummary.sublet > 0 && (
+                                <InfoRow
+                                  label="خدمات خارجية"
+                                  value={formatMoney(invoiceSummary.sublet)}
+                                />
+                              )}
+                              <div className="flex items-center justify-between gap-4 py-2.5 border-b border-slate-800/60">
+                                <span className="text-[11px] text-slate-400 font-medium shrink-0">
+                                  الخصم
+                                </span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={discountInput}
+                                  onChange={(e) => setDiscountInput(e.target.value)}
+                                  placeholder="0.00"
+                                  className="w-28 px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-100 text-left placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition"
+                                />
+                              </div>
+                              <InfoRow
+                                label={`ضريبة القيمة المضافة (${(
+                                  taxRateFraction(invoiceSummary.taxRate) * 100
+                                ).toLocaleString('en-US', { maximumFractionDigits: 2 })}%)`}
+                                value={formatMoney(invoiceSummary.taxAmount)}
+                              />
+                              <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                                <span className="text-xs font-bold text-slate-300">
+                                  الإجمالي النهائي
+                                </span>
+                                <span className="text-base font-bold text-emerald-400">
+                                  {formatMoney(invoiceSummary.total) || '0.00'}
+                                </span>
+                              </div>
+                              {invoiceSummary.source === 'local' && (
+                                <p className="text-[10px] text-amber-400 pt-1 leading-relaxed">
+                                  * حساب تقديري من البيانات المسجلة في البطاقة.
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-500">
+                              لا توجد بيانات لعرض معاينة الفاتورة.
+                            </p>
+                          )}
+
+                          {previewError && (
+                            <p className="text-[10px] text-amber-400 leading-relaxed">
+                              {previewError}
+                            </p>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleIssueInvoice}
+                            disabled={issuingInvoice || previewLoading}
+                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {issuingInvoice ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <FileText className="w-4 h-4" />
+                            )}
+                            {issuingInvoice ? 'جاري الإصدار...' : 'إصدار الفاتورة'}
+                          </button></div>
+                      )}
+                    </div>
+                  )}
+
                   {/* انتقالات الحالة */}
                   <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl space-y-4">
                     <h3 className="text-base font-bold flex items-center gap-2">

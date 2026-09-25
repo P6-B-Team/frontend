@@ -36,7 +36,7 @@ export default function LoginPage() {
       if (userRole === 'STUDENT' || userRole === 'TRAINEE') {
         window.location.href = '/student';
       } else if (['STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'].includes(userRole)) {
-        window.location.href = '/customer';
+        window.location.href = '/parts-requisition';
       } else {
         window.location.href = '/dashboard';
       }

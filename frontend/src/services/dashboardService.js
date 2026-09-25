@@ -24,3 +24,11 @@ export const getCurrentUser = async () => {
   const response = await api.get('/me');
   return response.data?.data || response.data;
 };
+
+/**
+ * GET /settings — إعدادات المنشأة (نسبة الضريبة والحدود) — تُستخدم في حساب الفاتورة
+ */
+export const getSettings = async () => {
+  const response = await api.get('/settings');
+  return response.data?.data || response.data;
+};

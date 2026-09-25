@@ -3,15 +3,50 @@ import {
   ClipboardList,
   Boxes,
   ShoppingCart,
+  GraduationCap,
+  PackagePlus,
   Gauge,
-  Sparkles,
-  FileText,
   LogOut
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 export default function Sidebar() {
   const location = useLocation();
+
+  const currentRole = (() => {
+    try {
+      const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const fromUser =
+        storedUser?.role || (Array.isArray(storedUser?.roles) ? storedUser.roles[0] : '');
+      const raw = fromUser || localStorage.getItem('role') || '';
+      return String(raw).toUpperCase().trim();
+    } catch {
+      return String(localStorage.getItem('role') || '').toUpperCase().trim();
+    }
+  })();
+
+  const INVENTORY_ROLES = ['WORKSHOP_MANAGER', 'STOREKEEPER', 'STORE_SUPERVISOR', 'ADMIN', 'MANAGER'];
+  const PROCUREMENT_ROLES = [
+    'WORKSHOP_MANAGER',
+    'PROCUREMENT',
+    'PROCUREMENT_APPROVER',
+    'STOREKEEPER',
+    'STORE_SUPERVISOR',
+    'ADMIN',
+    'MANAGER',
+  ];
+
+  const canViewInventory = INVENTORY_ROLES.includes(currentRole);
+  const canViewProcurement = PROCUREMENT_ROLES.includes(currentRole);
+  const canViewStockSection = canViewInventory || canViewProcurement;
+  // كتالوج وطلب قطع الغيار: لأمين المخزن ومستشار الخدمة والفني والمديرين
+  const PARTS_LINK_ROLES = ['STOREKEEPER', 'STORE_SUPERVISOR', 'SERVICE_ADVISOR', 'TECHNICIAN', 'WORKSHOP_MANAGER', 'ADMIN', 'MANAGER'];
+  const canViewPartsLink = PARTS_LINK_ROLES.includes(currentRole);
+  // MENTOR / TRAINING_SUPERVISOR: training portal ONLY — hide Dashboard + Job Cards
+  const userRole = localStorage.getItem('role') || currentRole;
+  const normalizedRole = String(userRole || currentRole).toUpperCase().trim();
+  const isTrainingOnly =
+    normalizedRole === 'MENTOR' || normalizedRole === 'TRAINING_SUPERVISOR';
   const isActive = (path) => location.pathname === path || location.pathname.startsWith(`${path}/`);
   const linkCls = (active) =>
     `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition ${
@@ -42,64 +77,67 @@ export default function Sidebar() {
 
         {/* Navigation Links */}
         <div className="p-4 space-y-6">
-          {/* Main Section */}
-          <div>
-            <p className="px-3 text-[11px] font-bold text-slate-400 mb-2">نظرة عامة</p>
-            <nav className="space-y-1">
-              <Link to="/dashboard" className={linkCls(isActive('/dashboard'))}>
-                <LayoutDashboard className={iconCls(isActive('/dashboard'))} />
-                <span>لوحة التحكم</span>
-              </Link>
-            </nav>
-          </div>
+          {/* Main Section — hidden for MENTOR / TRAINING_SUPERVISOR */}
+          {!isTrainingOnly && (
+            <div>
+              <p className="px-3 text-[11px] font-bold text-slate-400 mb-2">نظرة عامة</p>
+              <nav className="space-y-1">
+                <Link to="/dashboard" className={linkCls(isActive('/dashboard'))}>
+                  <LayoutDashboard className={iconCls(isActive('/dashboard'))} />
+                  <span>لوحة التحكم</span>
+                </Link>
+              </nav>
+            </div>
+          )}
 
           {/* Workshop Management */}
           <div>
             <p className="px-3 text-[11px] font-bold text-slate-400 mb-2">إدارة الورشة</p>
             <nav className="space-y-1">
-              <Link to="/jobs" className={linkCls(isActive('/jobs'))}>
-                <ClipboardList className={iconCls(isActive('/jobs'))} />
-                <span>بطاقات العمل</span>
+              {!isTrainingOnly && (
+                <Link to="/jobs" className={linkCls(isActive('/jobs'))}>
+                  <ClipboardList className={iconCls(isActive('/jobs'))} />
+                  <span>بطاقات العمل</span>
+                </Link>
+              )}
+              <Link to="/training-supervisor" className={linkCls(isActive('/training-supervisor'))}>
+                <GraduationCap className={iconCls(isActive('/training-supervisor'))} />
+                <span>إدارة التدريب العملي</span>
               </Link>
             </nav>
           </div>
 
-          {/* Inventory & Purchasing */}
-          <div>
-            <p className="px-3 text-[11px] font-bold text-slate-400 mb-2">المخزون والمشتريات</p>
-            <nav className="space-y-1">
-              <Link to="/inventory" className={linkCls(isActive('/inventory'))}>
-                <Boxes className={iconCls(isActive('/inventory'))} />
-                <span>المخزون وقطع الغيار</span>
-              </Link>
-              <Link to="/purchase-orders" className={linkCls(isActive('/purchase-orders'))}>
-                <ShoppingCart className={iconCls(isActive('/purchase-orders'))} />
-                <span>أوامر الشراء</span>
-              </Link>
-            </nav>
-          </div>
+          {/* Inventory, Purchasing & Parts Requisition — مخفي عن MENTOR و TRAINING_SUPERVISOR */}
+          {(canViewStockSection || canViewPartsLink) && (
+            <div>
+              <p className="px-3 text-[11px] font-bold text-slate-400 mb-2">المخزون والمشتريات</p>
+              <nav className="space-y-1">
+                {canViewPartsLink && (
+                  <Link to="/parts-requisition" className={linkCls(isActive('/parts-requisition'))}>
+                    <PackagePlus className={iconCls(isActive('/parts-requisition'))} />
+                    <span>كتالوج وطلب قطع الغيار</span>
+                  </Link>
+                )}
+                {canViewInventory && (
+                  <Link to="/inventory" className={linkCls(isActive('/inventory'))}>
+                    <Boxes className={iconCls(isActive('/inventory'))} />
+                    <span>المخزون وقطع الغيار</span>
+                  </Link>
+                )}
+                {canViewProcurement && (
+                  <Link to="/purchase-orders" className={linkCls(isActive('/purchase-orders'))}>
+                    <ShoppingCart className={iconCls(isActive('/purchase-orders'))} />
+                    <span>أوامر الشراء</span>
+                  </Link>
+                )}
+              </nav>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Footer Section (AI Widget + Logout Button) */}
-      <div className="p-4 border-t border-slate-100 space-y-3">
-        {/* AI Widget */}
-        <div className="bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3.5 space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-amber-500 rounded-lg flex items-center justify-center text-white">
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-amber-900">مساعد مهنة الذكي</h4>
-              <p className="text-[10px] text-amber-700">3 توصيات جديدة</p>
-            </div>
-          </div>
-          <button className="w-full py-2 bg-white hover:bg-amber-100/50 border border-amber-200 text-amber-900 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition">
-            <span>عرض التوصيات</span>
-            <FileText className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
+      {/* Footer Section (Logout Button) */}
+      <div className="p-4 border-t border-slate-100">
         {/* LogOut Button */}
         <button
           onClick={handleLogout}
