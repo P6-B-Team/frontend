@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mail, Lock, Eye, EyeOff, Gauge } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Wrench } from 'lucide-react';
 import { login } from '../services/authService';
 
 export default function LoginPage() {
@@ -32,9 +32,11 @@ export default function LoginPage() {
       localStorage.setItem('user', JSON.stringify(user));
       localStorage.setItem('role', userRole);
 
-      // التوجيه المباشر
+      // التوجيه المباشر حسب دور المستخدم
       if (userRole === 'STUDENT' || userRole === 'TRAINEE') {
         window.location.href = '/student';
+      } else if (['TRAINING_SUPERVISOR', 'MENTOR'].includes(userRole)) {
+        window.location.href = '/training-supervisor';
       } else if (['STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'].includes(userRole)) {
         window.location.href = '/parts-requisition';
       } else {
@@ -43,7 +45,7 @@ export default function LoginPage() {
     } catch (error) {
       console.error('Auth Error:', error);
       setErrorMessage(
-        'حدث خطأ، يرجى التأكد من البيانات و اعادة المحاولة'
+        'حدث خطأ، يرجى التأكد من البيانات وإعادة المحاولة'
       );
     } finally {
       setLoading(false);
@@ -51,20 +53,29 @@ export default function LoginPage() {
   };
 
   return (
-    <div dir="rtl" className="min-h-screen w-full bg-slate-100 flex items-center justify-center p-4 font-sans">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-8 md:p-10 border border-slate-200/80">
+    <div dir="rtl" className="min-h-screen w-full bg-slate-900 flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-8 md:p-10 border border-slate-100">
         
-        {/* شعار مهنة PRO علوي بسيط */}
+        {/* اللوجو وشعار النظام المعدل */}
         <div className="flex flex-col items-center justify-center mb-6">
-          <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-500/30 mb-3">
-            <Gauge className="w-7 h-7" />
+          <div className="relative mb-3">
+            <div className="w-14 h-14 bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-600/30 ring-4 ring-blue-50">
+              <Wrench className="w-7 h-7 transform -rotate-12" />
+            </div>
+            <span className="absolute -bottom-1 -right-1 bg-amber-500 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-md border-2 border-white uppercase tracking-wider">
+              PRO
+            </span>
           </div>
-          <h1 className="text-lg font-bold text-slate-900">مهنة PRO</h1>
-          <p className="text-[11px] text-slate-400 font-medium">نظام إدارة الورش والتدريب</p>
+
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">مهنة</h1>
+            <span className="text-2xl font-black text-blue-600">PRO</span>
+          </div>
+          <p className="text-xs font-semibold text-slate-400 mt-0.5">نظام إدارة الورش والتدريب العملي</p>
         </div>
 
         <div className="text-center mb-6">
-          <h2 className="text-xl font-bold text-slate-900 mb-1">مرحباً بك مجدداً</h2>
+          <h2 className="text-lg font-bold text-slate-800 mb-1">مرحباً بك مجدداً</h2>
           <p className="text-xs text-slate-500">سجّل الدخول للوصول إلى مساحة العمل الخاصة بك</p>
         </div>
 

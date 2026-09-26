@@ -37,7 +37,6 @@ const PROCUREMENT_ROLES = [
   'MANAGER',
 ];
 
-
 const TRAINING_ROLES = [
   'TRAINING_SUPERVISOR',
   'MENTOR',
@@ -62,11 +61,15 @@ const ProtectedRoute = ({ allowedRoles, children }) => {
     return <Navigate to="/student" replace />;
   }
   
+  if (['TRAINING_SUPERVISOR', 'MENTOR'].includes(userRole)) {
+    return <Navigate to="/training-supervisor" replace />;
+  }
+
   if (['STOREKEEPER', 'STORE_SUPERVISOR', 'PROCUREMENT', 'PROCUREMENT_APPROVER', 'FINANCE_VIEWER', 'CUSTOMER', 'BUYER'].includes(userRole)) {
     return <Navigate to="/parts-requisition" replace />;
   }
 
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to="/" replace />;
 };
 
 export default function App() {
@@ -80,7 +83,7 @@ export default function App() {
           element={
             <ProtectedRoute allowedRoles={[
               'WORKSHOP_MANAGER', 'SERVICE_ADVISOR', 'TECHNICIAN', 
-              'QUALITY_CHECKER', 'TRAINING_SUPERVISOR', 'MENTOR', 'AUDITOR', 'ADMIN', 'MANAGER'
+              'QUALITY_CHECKER', 'AUDITOR', 'ADMIN', 'MANAGER'
             ]}>
               <DashboardPage />
             </ProtectedRoute>
